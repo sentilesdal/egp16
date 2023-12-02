@@ -34,7 +34,7 @@ describe("EGP16-GSC", function () {
   async function getContracts() {
     const signer = await ethers.getImpersonatedSigner(ADDRESS_ONE);
     const coreVoting = (
-      await ethers.getContractAt("CoreVoting", addresses.coreVoting)
+      await ethers.getContractAt("CoreVoting", addresses.gscCoreVoting)
     ).connect(signer);
 
     const timeLock = (
