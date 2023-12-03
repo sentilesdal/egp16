@@ -5,8 +5,12 @@ import {
 } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { AddressLike, BytesLike } from "ethers";
-import { targetsTimeLock, callDatasTimeLock } from "./gscTargetsAndCallDatas";
+import { AddressLike, BytesLike, formatEther, parseEther } from "ethers";
+import { targets, callDatas } from "./gscTargetsAndCallDatas";
+
+// ETHERSCAN THIS
+// DECODE THE CALLDATA
+const gscTargets = "0x654be0b5556f8eadbc2d140505445fa32715ef2b";
 
 const addresses = {
   airdrop: "0xd04a459FFD3A5E3C93d5cD8BB13d26a9845716c2",
@@ -25,49 +29,53 @@ const addresses = {
   unfrozenVestingVaultAddress: "0x38dbc89Fc52948192843920E78c8B609474b60B4",
 };
 
-const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
+const stableNodeAddress = "0x1D1a13b16667c284b87de62CAEEfF0ce89E342B2";
+const simonaAddress = "0x54BeCc7560a7Be76d72ED76a1f5fee6C5a2A7Ab6";
+const robindAddress = "0x9F85221D7ec0dec8C4a28E5c7038Cfc4ad285a68";
+
+const gscMemberAddresses = [stableNodeAddress, simonaAddress, robindAddress];
 
 describe("EGP16-GSC", function () {
   // We define a fixture to reuse the same setup in every test.
   // We use loadFixture to run this setup once, snapshot that state,
   // and reset Hardhat Network to that snapshot in every test.
   async function getContracts() {
-    const signer = await ethers.getImpersonatedSigner(ADDRESS_ONE);
-    const coreVoting = (
+    const signer0 = await ethers.getImpersonatedSigner(gscMemberAddresses[0]);
+    const signer1 = await ethers.getImpersonatedSigner(gscMemberAddresses[1]);
+    const signer2 = await ethers.getImpersonatedSigner(gscMemberAddresses[2]);
+
+    const gscSigners = [signer0, signer1, signer2];
+
+    // give ETH to all signers
+    const stringValue = formatEther(parseEther("1000000").toString());
+    const hexStringValue = ethers.hexlify(ethers.toUtf8Bytes(stringValue));
+    const responses = gscSigners.map(({ address }) =>
+      ethers.provider.send("hardhat_setBalance", [address, hexStringValue])
+    );
+    const receipts = await Promise.all(responses);
+
+    // Now we'll create the proposal
+    const signer = signer0;
+    const gscCoreVoting = (
       await ethers.getContractAt("CoreVoting", addresses.gscCoreVoting)
     ).connect(signer);
 
-    const timeLock = (
-      await ethers.getContractAt("Timelock", addresses.timeLock)
-    ).connect(signer);
-
-    const lockingVault = await ethers.getContractAt(
-      "LockingVault",
-      addresses.lockingVault
-    );
-
-    const vestingVault = await ethers.getContractAt(
-      "VestingVault",
+    const gscVault = await ethers.getContractAt(
+      "GSCVault",
       addresses.vestingVault
     );
 
-    const vaults: AddressLike[] = [addresses.lockingVault];
+    const vaults: AddressLike[] = [addresses.gscVault];
     const extraData: BytesLike[] = ["0x"];
 
-    const callHashTimelock = createCallHash(targetsTimeLock, callDatasTimeLock);
-
-    const calldataCoreVoting = timeLock.interface.encodeFunctionData(
-      "registerCall",
-      [callHashTimelock]
-    );
-    const targetsCoreVoting: AddressLike[] = [addresses.timeLock];
-    const calldatasCoreVoting: BytesLike[] = [calldataCoreVoting];
+    const targetsCoreVoting: AddressLike[] = targets;
+    const calldatasCoreVoting: BytesLike[] = callDatas;
     const twoWeeksFromNow = 14 * 24 * 60 * 60 + Date.now();
     const currentBlock = BigInt(await signer.provider.getBlockNumber());
     const lastCall = BigInt(twoWeeksFromNow);
     const ballot = BigInt(0);
 
-    const txResponse = await coreVoting
+    const txResponse = await gscCoreVoting
       .connect(signer)
       .proposal(
         vaults,
@@ -83,9 +91,9 @@ describe("EGP16-GSC", function () {
       throw Error("No transaction receipt");
     }
 
-    const proposalCount = await coreVoting.proposalCount();
+    const proposalCount = await gscCoreVoting.proposalCount();
     const proposalId = proposalCount - 1n;
-    let proposal = await coreVoting.proposals(proposalId);
+    let proposal = await gscCoreVoting.proposals(proposalId);
 
     const proposalInfo = {
       proposalHash: proposal[0],
@@ -97,15 +105,13 @@ describe("EGP16-GSC", function () {
     };
 
     return {
-      coreVoting,
-      timeLock,
-      lockingVault,
-      vestingVault,
+      gscCoreVoting,
+      gscVault,
       signer,
+      gscSigners,
       currentBlock,
       proposalId,
       proposalInfo,
-      callHashTimelock,
       targetsCoreVoting,
       calldatasCoreVoting,
     };
@@ -114,7 +120,7 @@ describe("EGP16-GSC", function () {
   describe("Propsoal", function () {
     it("Should create the proposal", async function () {
       const {
-        coreVoting,
+        gscCoreVoting,
         currentBlock,
         proposalId,
         targetsCoreVoting,
@@ -125,7 +131,7 @@ describe("EGP16-GSC", function () {
         targetsCoreVoting,
         calldatasCoreVoting
       );
-      let proposal = await coreVoting.proposals(proposalId);
+      let proposal = await gscCoreVoting.proposals(proposalId);
 
       const proposalInfo = {
         created: proposal[1],
@@ -136,7 +142,7 @@ describe("EGP16-GSC", function () {
         lastCall: proposal[5],
       };
 
-      const dayinblocks = await coreVoting.DAY_IN_BLOCKS();
+      const dayinblocks = await gscCoreVoting.DAY_IN_BLOCKS();
       const nextBlock = currentBlock + 1n;
       const lockDuration = nextBlock + dayinblocks * 3n;
       const expiration = lockDuration + dayinblocks * 5n;
@@ -147,78 +153,60 @@ describe("EGP16-GSC", function () {
           created: currentBlock,
           unlock: lockDuration,
           expiration: expiration,
-          quorum: 1100000000000000000000000n,
+          quorum: 3n,
           lastCall: proposalInfo.lastCall,
         },
         "Proposals aren't equal."
       );
     });
+
     it("Should execute the proposal", async function () {
       const {
-        signer,
-        coreVoting,
+        gscSigners,
+        gscCoreVoting,
         currentBlock,
         proposalId,
         targetsCoreVoting,
         calldatasCoreVoting,
       } = await loadFixture(getContracts);
 
-      const dayinblocks = await coreVoting.DAY_IN_BLOCKS();
+      // vote with enough to pass quorum
+      const votePromises = gscSigners.map((signer) =>
+        gscCoreVoting
+          .connect(signer)
+          .vote([addresses.gscVault], ["0x"], proposalId, 0)
+      );
+
+      const responses = await Promise.all(votePromises);
+      await Promise.all(responses.map((response) => response.wait()));
+      console.log("        votes are in!");
+
+      // now we up the block count so we can execute
+      const dayinblocks = await gscCoreVoting.DAY_IN_BLOCKS();
       const lockDuration = dayinblocks * 3n;
 
       await mine(lockDuration);
+      console.log("        time has been advanced.");
 
-      const txResponse = await coreVoting.execute(
+      // finally, execute and check that the event fired
+      const txResponse = await gscCoreVoting.execute(
         proposalId,
         targetsCoreVoting,
         calldatasCoreVoting
       );
+      console.log("        proposal execution submitted.");
       const txReceipt = await txResponse.wait();
-      expect(txReceipt).to.not.equal(null);
 
-      const ProposalExecutedEvent = coreVoting.getEvent("ProposalExecuted");
-      const events = await coreVoting.queryFilter(
+      expect(txReceipt).to.not.equal(null);
+      console.log("        proposal is now executed.");
+
+      const ProposalExecutedEvent = gscCoreVoting.getEvent("ProposalExecuted");
+      const events = await gscCoreVoting.queryFilter(
         ProposalExecutedEvent,
         Number(currentBlock)
       );
       expect(events.length).to.equal(1);
       expect(events[0].args[0]).to.equal(proposalId);
-    });
-
-    it("Should execute the timelocked proposal", async function () {
-      const {
-        signer,
-        coreVoting,
-        timeLock,
-        proposalId,
-        targetsCoreVoting,
-        calldatasCoreVoting,
-        callHashTimelock,
-      } = await loadFixture(getContracts);
-
-      const dayinblocks = await coreVoting.DAY_IN_BLOCKS();
-      const lockDuration = dayinblocks * 3n;
-
-      await mine(lockDuration);
-      (
-        await coreVoting.execute(
-          proposalId,
-          targetsCoreVoting,
-          calldatasCoreVoting
-        )
-      ).wait();
-
-      const waitTime = await timeLock.waitTime();
-      time.increaseTo(BigInt(Date.now()) + waitTime);
-      await mine(1);
-      const txResponse = await timeLock.execute(
-        targetsTimeLock,
-        callDatasTimeLock
-      );
-      console.log("txResponse", txResponse);
-      const txReceipt = await txResponse.wait();
-      console.log("txReceipt", txReceipt);
-      expect(txReceipt).to.not.equal(null);
     });
   });
 });

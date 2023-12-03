@@ -240,6 +240,7 @@ describe("EGP16", function () {
       const lockDuration = dayinblocks * 3n;
 
       await mine(lockDuration);
+      console.log("        blocks have been advanced.");
       (
         await coreVoting.execute(
           proposalId,
@@ -250,14 +251,15 @@ describe("EGP16", function () {
 
       const waitTime = await timeLock.waitTime();
       time.increaseTo(BigInt(Date.now()) + waitTime);
+      console.log("        time has been advanced.");
       await mine(1);
       const txResponse = await timeLock.execute(
         targetsTimeLock,
         callDatasTimeLock
       );
-      console.log("txResponse", txResponse);
+      console.log("        proposal execution submitted.");
       const txReceipt = await txResponse.wait();
-      console.log("txReceipt", txReceipt);
+      console.log("        proposal is now executed.");
       expect(txReceipt).to.not.equal(null);
     });
   });
